@@ -1,10 +1,11 @@
 package com.example.elasticsearch.demo;
 
-import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
-import com.alibaba.fastjson.TypeReference;
 import com.example.elasticsearch.demo.model.BaseInfo;
 import com.example.elasticsearch.demo.util.DataUtil;
+import org.apache.commons.lang3.StringUtils;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchRequest;
@@ -14,7 +15,6 @@ import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.CreateIndexResponse;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.text.Text;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -33,6 +33,7 @@ import org.springframework.test.context.junit4.SpringRunner;
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -70,21 +71,35 @@ public class ApplicationTests {
                 "      }\n" +
                 "    }\n" +
                 "  }";
-        CreateIndexRequest request = new CreateIndexRequest("index_baseinfo_ik");
-        request.settings(Settings.builder().put("index.number_of_shards", 10).put("index.number_of_replicas", 2));
+        CreateIndexRequest request = new CreateIndexRequest("index_baseinfo_bigdata");
+        request.settings(Settings.builder().put("index.number_of_shards", 3).put("index.number_of_replicas", 2));
         request.mapping(CREATE_INDEX, XContentType.JSON);
         CreateIndexResponse res = client.indices().create(request, RequestOptions.DEFAULT);
     }
 
+
     @Test
     public void insertOrUpdate() throws Exception {
-        IndexRequest request = new IndexRequest("index_baseinfo_ik");
+        IndexRequest request = new IndexRequest("index_baseinfo_bigdata");
         List<BaseInfo> list = DataUtil.getBaseInfoList();
-        for (BaseInfo t : list) {
-            request.id(t.getId());
-            request.source(JSONObject.toJSONString(t), XContentType.JSON);
-            IndexResponse a = client.index(request, RequestOptions.DEFAULT);
+        for (int i = 0; i < 1000; i++) {
+            for (BaseInfo t : list) {
+                request.source(JSONObject.toJSONString(t), XContentType.JSON);
+                IndexResponse a = client.index(request, RequestOptions.DEFAULT);
+            }
         }
+    }
+
+    @Test
+    public void bulkInsert() throws Exception {
+        BulkRequest request = new BulkRequest();
+        List<BaseInfo> list = DataUtil.getBaseInfoList();
+        for (int i = 0; i < 1000; i++) {
+            for (BaseInfo t : list) {
+                request.add(new IndexRequest("index_baseinfo_bigdata").source(JSONObject.toJSONString(t), XContentType.JSON));
+            }
+        }
+        BulkResponse a = client.bulk(request, RequestOptions.DEFAULT);
     }
 
     @Test
@@ -121,7 +136,7 @@ public class ApplicationTests {
         QueryBuilder matchQueryBuilder = QueryBuilders.matchQuery("projectName", "公司");
 
         // 测试查询3
-        QueryBuilder stringQueryBuilder = QueryBuilders.queryStringQuery("公司").field("projectName");
+        QueryBuilder stringQueryBuilder = QueryBuilders.queryStringQuery("北京");
 
         // 测试查询4
         QueryBuilder termQueryBuilder = QueryBuilders.termQuery("projectName", "公司");
@@ -170,14 +185,14 @@ public class ApplicationTests {
          */
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
         // 1.查询条件 QueryBuilder
-        searchSourceBuilder.query(multiMatchQuery);
+        searchSourceBuilder.query(stringQueryBuilder);
         // 2. 排序条件
         searchSourceBuilder.sort(new ScoreSortBuilder().order(SortOrder.DESC)); // 根据分数 _score 降序排列 (默认行为)
         // searchSourceBuilder.sort(new FieldSortBuilder("id").order(SortOrder.ASC));  // 根据 id 降序排列
         // 3. 高亮highlightBuilder
         searchSourceBuilder.highlighter(highlightBuilder);
         searchSourceBuilder.from(0);
-        searchSourceBuilder.size(100);
+        searchSourceBuilder.size(10000);
 
         /*
         配置source结束
@@ -190,55 +205,21 @@ public class ApplicationTests {
         long total = searchHits.getTotalHits().value;
         SearchHit[] hits = searchHits.getHits();
 
-        List<BaseInfo> list = new ArrayList<>();
+        List<Map<String, Object>> list = new ArrayList<>();
         for (SearchHit searchHit : hits) {
             //将文档中的每一个对象转换json串值
-            String sourceAsString = searchHit.getSourceAsString();
-            //将json串值转换成对应的实体对象
-            BaseInfo bs = JSON.parseObject(sourceAsString, new TypeReference<BaseInfo>() {
-            });
+            Map<String, Object> sourceAsMap = searchHit.getSourceAsMap();
             //获取对应的高亮域
             Map<String, HighlightField> highlightFields = searchHit.getHighlightFields();
-            //高亮字段
-            HighlightField highlight1 = highlightFields.get("projectName");
-            if (highlight1 != null) {
-                Text[] titleTexts = highlight1.fragments();
-                StringBuilder text1 = new StringBuilder();
-                for (Text text : titleTexts) {
-                    text1.append(text);
+            highlightFields.forEach((k, v) -> {
+                if (v != null) {
+                    sourceAsMap.put(k, StringUtils.strip(Arrays.toString(v.fragments()), "[]"));
                 }
-                bs.setProjectName(text1.toString());
-            }
-            HighlightField highlight2 = highlightFields.get("shortName");
-            if (highlight2 != null) {
-                Text[] titleTexts = highlight2.fragments();
-                StringBuilder text2 = new StringBuilder();
-                for (Text text : titleTexts) {
-                    text2.append(text);
-                }
-                bs.setShortName(text2.toString());
-            }
-            HighlightField highlight3 = highlightFields.get("businessAddress");
-            if (highlight3 != null) {
-                Text[] titleTexts = highlight3.fragments();
-                StringBuilder text3 = new StringBuilder();
-                for (Text text : titleTexts) {
-                    text3.append(text);
-                }
-                bs.setBusinessAddress(text3.toString());
-            }
-            HighlightField highlight4 = highlightFields.get("businessModel");
-            if (highlight4 != null) {
-                Text[] titleTexts = highlight4.fragments();
-                StringBuilder text4 = new StringBuilder();
-                for (Text text : titleTexts) {
-                    text4.append(text);
-                }
-                bs.setBusinessModel(text4.toString());
-            }
-            list.add(bs);
+            });
+            list.add(sourceAsMap);
         }
         System.out.println(list);
+        client.close();
     }
 
 }
